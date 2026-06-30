@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useCallback } from 'react'
-import { Plus, Trash2, Check, Calendar, Euro, CreditCard, Wallet, ChevronDown, ChevronUp, Edit2, Download, Upload, Cloud, CloudOff, RefreshCw, Loader2, TrendingUp, TrendingDown, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Plus, Trash2, Check, Calendar, Euro, CreditCard, Wallet, ChevronDown, ChevronUp, Download, Upload, Cloud, CloudOff, RefreshCw, Loader2, TrendingUp, TrendingDown, ChevronLeft, ChevronRight, CircleDollarSign } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 
 export default function ExpenseTracker() {
@@ -12,13 +12,13 @@ export default function ExpenseTracker() {
   const [showAddExpense, setShowAddExpense] = useState(false)
   const [showAddIncome, setShowAddIncome] = useState(false)
   const [expandedPlan, setExpandedPlan] = useState(null)
-  const [editingItem, setEditingItem] = useState(null)
   const [isLoaded, setIsLoaded] = useState(false)
   const [isSyncing, setIsSyncing] = useState(false)
   const [isOnline, setIsOnline] = useState(false)
   const [lastSync, setLastSync] = useState(null)
+  const [payingExpense, setPayingExpense] = useState(null)
+  const [paymentAmount, setPaymentAmount] = useState('')
   
-  // Current selected month
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date()
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
@@ -30,7 +30,6 @@ export default function ExpenseTracker() {
 
   const categories = ['Γενικά', 'Λογαριασμοί', 'Σούπερ Μάρκετ', 'Μεταφορές', 'Ψυχαγωγία', 'Υγεία', 'Εκπαίδευση', 'Ενοίκιο', 'Άλλο']
   const isSupabaseConfigured = supabase !== null
-
   const monthNames = ['Ιανουάριος', 'Φεβρουάριος', 'Μάρτιος', 'Απρίλιος', 'Μάιος', 'Ιούνιος', 'Ιούλιος', 'Αύγουστος', 'Σεπτέμβριος', 'Οκτώβριος', 'Νοέμβριος', 'Δεκέμβριος']
 
   const getMonthName = (monthStr) => {
@@ -126,8 +125,8 @@ export default function ExpenseTracker() {
   useEffect(() => { if (isLoaded) localStorage.setItem('installments', JSON.stringify(installments)) }, [installments, isLoaded])
   useEffect(() => { if (isLoaded) localStorage.setItem('monthlyBudgets', JSON.stringify(monthlyBudgets)) }, [monthlyBudgets, isLoaded])
 
-  const formatDate = (d) => d ? new Date(d).toLocaleDateString('el-GR') : '-'
   const formatCurrency = (a) => new Intl.NumberFormat('el-GR', { style: 'currency', currency: 'EUR' }).format(a)
+  const formatDate = (d) => d ? new Date(d).toLocaleDateString('el-GR') : '-'
 
   // Installment functions
   const addPlan = async () => {
@@ -156,12 +155,7 @@ export default function ExpenseTracker() {
     if (!newIncome.description || !newIncome.amount) return
     const budget = getCurrentBudget()
     const income = { id: Date.now(), description: newIncome.description, amount: parseFloat(newIncome.amount) }
-    const updatedBudget = {
-      id: budget.id || Date.now(),
-      month: selectedMonth,
-      incomes: [...(budget.incomes || []), income],
-      expenses: budget.expenses || []
-    }
+    const updatedBudget = { id: budget.id || Date.now(), month: selectedMonth, incomes: [...(budget.incomes || []), income], expenses: budget.expenses || [] }
     setMonthlyBudgets(prev => {
       const exists = prev.find(b => b.month === selectedMonth)
       if (exists) return prev.map(b => b.month === selectedMonth ? updatedBudget : b)
@@ -175,13 +169,15 @@ export default function ExpenseTracker() {
   const addExpense = async () => {
     if (!newExpense.description || !newExpense.amount) return
     const budget = getCurrentBudget()
-    const expense = { id: Date.now(), description: newExpense.description, amount: parseFloat(newExpense.amount), category: newExpense.category }
-    const updatedBudget = {
-      id: budget.id || Date.now(),
-      month: selectedMonth,
-      incomes: budget.incomes || [],
-      expenses: [...(budget.expenses || []), expense]
+    const expense = { 
+      id: Date.now(), 
+      description: newExpense.description, 
+      amount: parseFloat(newExpense.amount), 
+      paidAmount: 0,
+      completed: false,
+      category: newExpense.category 
     }
+    const updatedBudget = { id: budget.id || Date.now(), month: selectedMonth, incomes: budget.incomes || [], expenses: [...(budget.expenses || []), expense] }
     setMonthlyBudgets(prev => {
       const exists = prev.find(b => b.month === selectedMonth)
       if (exists) return prev.map(b => b.month === selectedMonth ? updatedBudget : b)
@@ -206,12 +202,43 @@ export default function ExpenseTracker() {
     await saveBudget(updatedBudget)
   }
 
+  const completeExpense = async (expenseId) => {
+    const budget = getCurrentBudget()
+    const updatedBudget = {
+      ...budget,
+      expenses: budget.expenses.map(e => e.id === expenseId ? { ...e, paidAmount: e.amount, completed: true } : e)
+    }
+    setMonthlyBudgets(prev => prev.map(b => b.month === selectedMonth ? updatedBudget : b))
+    await saveBudget(updatedBudget)
+  }
+
+  const addPartialPayment = async (expenseId) => {
+    if (!paymentAmount || parseFloat(paymentAmount) <= 0) return
+    const budget = getCurrentBudget()
+    const updatedBudget = {
+      ...budget,
+      expenses: budget.expenses.map(e => {
+        if (e.id === expenseId) {
+          const newPaidAmount = (e.paidAmount || 0) + parseFloat(paymentAmount)
+          const isCompleted = newPaidAmount >= e.amount
+          return { ...e, paidAmount: Math.min(newPaidAmount, e.amount), completed: isCompleted }
+        }
+        return e
+      })
+    }
+    setMonthlyBudgets(prev => prev.map(b => b.month === selectedMonth ? updatedBudget : b))
+    await saveBudget(updatedBudget)
+    setPayingExpense(null)
+    setPaymentAmount('')
+  }
+
   const getStats = (p) => ({ paid: p.payments.filter(x => x.paid).length, remaining: p.payments.filter(x => !x.paid).reduce((s, x) => s + x.amount, 0) })
   
   const budget = getCurrentBudget()
   const totalIncome = (budget.incomes || []).reduce((s, i) => s + i.amount, 0)
   const totalExpenses = (budget.expenses || []).reduce((s, e) => s + e.amount, 0)
-  const remaining = totalIncome - totalExpenses
+  const totalPaidExpenses = (budget.expenses || []).reduce((s, e) => s + (e.paidAmount || 0), 0)
+  const remaining = totalIncome - totalPaidExpenses
 
   const overallInstDue = installments.reduce((s, p) => s + p.payments.filter(x => !x.paid).reduce((a, x) => a + x.amount, 0), 0)
 
@@ -224,18 +251,8 @@ export default function ExpenseTracker() {
       r.onload = async (e) => { 
         try { 
           const d = JSON.parse(e.target.result); 
-          if (d.installments) { 
-            setInstallments(d.installments); 
-            for (const i of d.installments) await saveInstallment(i) 
-          } 
-          if (d.monthlyBudgets) { 
-            setMonthlyBudgets(d.monthlyBudgets); 
-            for (const b of d.monthlyBudgets) await saveBudget(b) 
-          }
-          // Support old format
-          if (d.expenses && !d.monthlyBudgets) {
-            alert('Παλιό format - τα έξοδα δεν μεταφέρθηκαν. Πρόσθεσέ τα χειροκίνητα.')
-          }
+          if (d.installments) { setInstallments(d.installments); for (const i of d.installments) await saveInstallment(i) } 
+          if (d.monthlyBudgets) { setMonthlyBudgets(d.monthlyBudgets); for (const b of d.monthlyBudgets) await saveBudget(b) }
           alert('Εισαγωγή επιτυχής!') 
         } catch { alert('Σφάλμα αρχείου') } 
       }; 
@@ -273,7 +290,6 @@ export default function ExpenseTracker() {
 
         {activeTab === 'installments' && (
           <div className="space-y-4">
-            {/* Stats */}
             <div className="bg-gradient-to-br from-blue-500/20 to-blue-600/10 border border-blue-500/30 rounded-xl p-4">
               <div className="text-blue-400 text-sm mb-1">Συνολικές Οφειλές Δόσεων</div>
               <div className="text-2xl md:text-3xl font-bold text-white">{formatCurrency(overallInstDue)}</div>
@@ -341,18 +357,22 @@ export default function ExpenseTracker() {
             </div>
 
             {/* Stats Cards */}
-            <div className="grid grid-cols-3 gap-2 md:gap-4">
-              <div className="bg-gradient-to-br from-green-500/20 to-green-600/10 border border-green-500/30 rounded-xl p-3 md:p-4">
-                <div className="text-green-400 text-xs md:text-sm mb-1 flex items-center gap-1"><TrendingUp size={14} />Έσοδα</div>
-                <div className="text-lg md:text-2xl font-bold text-white">{formatCurrency(totalIncome)}</div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
+              <div className="bg-gradient-to-br from-green-500/20 to-green-600/10 border border-green-500/30 rounded-xl p-3">
+                <div className="text-green-400 text-xs mb-1 flex items-center gap-1"><TrendingUp size={12} />Έσοδα</div>
+                <div className="text-lg md:text-xl font-bold text-white">{formatCurrency(totalIncome)}</div>
               </div>
-              <div className="bg-gradient-to-br from-red-500/20 to-red-600/10 border border-red-500/30 rounded-xl p-3 md:p-4">
-                <div className="text-red-400 text-xs md:text-sm mb-1 flex items-center gap-1"><TrendingDown size={14} />Έξοδα</div>
-                <div className="text-lg md:text-2xl font-bold text-white">{formatCurrency(totalExpenses)}</div>
+              <div className="bg-gradient-to-br from-red-500/20 to-red-600/10 border border-red-500/30 rounded-xl p-3">
+                <div className="text-red-400 text-xs mb-1 flex items-center gap-1"><TrendingDown size={12} />Έξοδα</div>
+                <div className="text-lg md:text-xl font-bold text-white">{formatCurrency(totalExpenses)}</div>
               </div>
-              <div className={`bg-gradient-to-br ${remaining >= 0 ? 'from-blue-500/20 to-blue-600/10 border-blue-500/30' : 'from-orange-500/20 to-orange-600/10 border-orange-500/30'} border rounded-xl p-3 md:p-4`}>
-                <div className={`${remaining >= 0 ? 'text-blue-400' : 'text-orange-400'} text-xs md:text-sm mb-1`}>Υπόλοιπο</div>
-                <div className="text-lg md:text-2xl font-bold text-white">{formatCurrency(remaining)}</div>
+              <div className="bg-gradient-to-br from-orange-500/20 to-orange-600/10 border border-orange-500/30 rounded-xl p-3">
+                <div className="text-orange-400 text-xs mb-1">Πληρωμένα</div>
+                <div className="text-lg md:text-xl font-bold text-white">{formatCurrency(totalPaidExpenses)}</div>
+              </div>
+              <div className={`bg-gradient-to-br ${remaining >= 0 ? 'from-blue-500/20 to-blue-600/10 border-blue-500/30' : 'from-red-500/20 to-red-600/10 border-red-500/30'} border rounded-xl p-3`}>
+                <div className={`${remaining >= 0 ? 'text-blue-400' : 'text-red-400'} text-xs mb-1`}>Υπόλοιπο</div>
+                <div className="text-lg md:text-xl font-bold text-white">{formatCurrency(remaining)}</div>
               </div>
             </div>
 
@@ -423,21 +443,93 @@ export default function ExpenseTracker() {
                   <h3 className="font-semibold text-red-400 flex items-center gap-2"><TrendingDown size={16} />Έξοδα</h3>
                 </div>
                 <div className="divide-y divide-slate-700/50">
-                  {(budget.expenses || []).map(expense => (
-                    <div key={expense.id} className="flex items-center justify-between p-3">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 bg-red-600/20 rounded-lg flex items-center justify-center"><Euro className="text-red-400" size={16} /></div>
-                        <div>
-                          <span className="text-white">{expense.description}</span>
-                          <span className="text-xs text-slate-400 ml-2 px-2 py-0.5 bg-slate-700 rounded">{expense.category}</span>
+                  {(budget.expenses || []).map(expense => {
+                    const paidAmount = expense.paidAmount || 0
+                    const remainingAmount = expense.amount - paidAmount
+                    const progress = (paidAmount / expense.amount) * 100
+                    const isCompleted = expense.completed || paidAmount >= expense.amount
+
+                    return (
+                      <div key={expense.id} className={`p-3 ${isCompleted ? 'bg-green-900/10' : ''}`}>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-3">
+                            <button 
+                              onClick={() => !isCompleted && completeExpense(expense.id)}
+                              className={`w-9 h-9 rounded-lg flex items-center justify-center ${isCompleted ? 'bg-green-600 text-white' : 'bg-slate-700 text-slate-400 hover:bg-slate-600'}`}
+                            >
+                              {isCompleted ? <Check size={16} /> : <Euro size={16} />}
+                            </button>
+                            <div>
+                              <span className={`font-medium ${isCompleted ? 'text-green-400 line-through' : 'text-white'}`}>{expense.description}</span>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-xs text-slate-400 px-2 py-0.5 bg-slate-700 rounded">{expense.category}</span>
+                                {!isCompleted && remainingAmount > 0 && (
+                                  <span className="text-xs text-orange-400">Μένουν: {formatCurrency(remainingAmount)}</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="text-right">
+                              <div className={`font-medium ${isCompleted ? 'text-green-400' : 'text-white'}`}>{formatCurrency(expense.amount)}</div>
+                              {paidAmount > 0 && !isCompleted && (
+                                <div className="text-xs text-green-400">Πληρώθηκαν: {formatCurrency(paidAmount)}</div>
+                              )}
+                            </div>
+                            {!isCompleted && (
+                              <button 
+                                onClick={() => setPayingExpense(payingExpense === expense.id ? null : expense.id)}
+                                className="p-2 text-blue-400 hover:text-blue-300 bg-blue-600/20 rounded-lg"
+                                title="Προσθήκη πληρωμής"
+                              >
+                                <CircleDollarSign size={16} />
+                              </button>
+                            )}
+                            <button onClick={() => removeExpense(expense.id)} className="p-2 text-slate-400 hover:text-red-400"><Trash2 size={14} /></button>
+                          </div>
                         </div>
+                        
+                        {/* Progress Bar */}
+                        {!isCompleted && (
+                          <div className="mt-2">
+                            <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+                              <div 
+                                className="h-full bg-gradient-to-r from-green-500 to-green-400 transition-all duration-300"
+                                style={{ width: `${progress}%` }}
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Payment Input */}
+                        {payingExpense === expense.id && (
+                          <div className="mt-3 flex gap-2">
+                            <input
+                              type="number"
+                              step="0.01"
+                              placeholder="Ποσό πληρωμής..."
+                              value={paymentAmount}
+                              onChange={e => setPaymentAmount(e.target.value)}
+                              className="flex-1 bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-400"
+                              autoFocus
+                            />
+                            <button 
+                              onClick={() => addPartialPayment(expense.id)}
+                              className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm"
+                            >
+                              Πληρωμή
+                            </button>
+                            <button 
+                              onClick={() => { setPayingExpense(null); setPaymentAmount('') }}
+                              className="px-3 py-2 bg-slate-700 text-slate-300 rounded-lg text-sm"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        )}
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-red-400 font-medium">{formatCurrency(expense.amount)}</span>
-                        <button onClick={() => removeExpense(expense.id)} className="p-2 text-slate-400 hover:text-red-400"><Trash2 size={14} /></button>
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             )}

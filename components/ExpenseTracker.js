@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useCallback } from 'react'
-import { Plus, Trash2, Check, Calendar, Euro, CreditCard, Wallet, ChevronDown, ChevronUp, Download, Upload, Cloud, CloudOff, RefreshCw, Loader2, TrendingUp, TrendingDown, ChevronLeft, ChevronRight, CircleDollarSign, RotateCcw, Repeat, X, History, Copy } from 'lucide-react'
+import { Plus, Trash2, Check, Calendar, Euro, CreditCard, Wallet, ChevronDown, ChevronUp, Download, Upload, Cloud, CloudOff, RefreshCw, Loader2, TrendingUp, TrendingDown, ChevronLeft, ChevronRight, CircleDollarSign, RotateCcw, Repeat, X, History, Copy, Pencil, Save } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 
 export default function ExpenseTracker() {
@@ -20,6 +20,9 @@ export default function ExpenseTracker() {
   const [lastSync, setLastSync] = useState(null)
   const [payingExpense, setPayingExpense] = useState(null)
   const [paymentAmount, setPaymentAmount] = useState('')
+  const [editingIncome, setEditingIncome] = useState(null)
+  const [editingExpense, setEditingExpense] = useState(null)
+  const [editForm, setEditForm] = useState({ description: '', amount: '', category: '' })
 
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date()
@@ -45,6 +48,11 @@ export default function ExpenseTracker() {
     return `${monthNamesShort[parseInt(month) - 1]} ${year}`
   }
 
+  const getCurrentMonth = () => {
+    const now = new Date()
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  }
+
   const changeMonth = (direction) => {
     const [year, month] = selectedMonth.split('-').map(Number)
     let newMonth = month + direction
@@ -58,11 +66,27 @@ export default function ExpenseTracker() {
     return monthlyBudgets.find(b => b.month === selectedMonth) || { month: selectedMonth, incomes: [], expenses: [] }
   }
 
+  // Check if month is current or future
+  const isCurrentOrFutureMonth = (monthStr) => {
+    const currentMonth = getCurrentMonth()
+    return monthStr >= currentMonth
+  }
+
+  // Apply recurring items only to current and future months
   const applyRecurringItems = useCallback((budget) => {
+    // Only apply to current or future months
+    if (!isCurrentOrFutureMonth(budget.month)) {
+      return { budget, updated: false }
+    }
+
     let updated = false
     let newBudget = { ...budget, incomes: [...(budget.incomes || [])], expenses: [...(budget.expenses || [])] }
 
     recurringItems.incomes.forEach(ri => {
+      // Check if recurring item is active for this month
+      if (ri.startMonth && budget.month < ri.startMonth) return
+      if (ri.endMonth && budget.month > ri.endMonth) return
+
       const exists = newBudget.incomes.some(i => i.recurringId === ri.id)
       if (!exists) {
         newBudget.incomes.push({ id: Date.now() + Math.random(), description: ri.description, amount: ri.amount, recurringId: ri.id })
@@ -71,6 +95,10 @@ export default function ExpenseTracker() {
     })
 
     recurringItems.expenses.forEach(re => {
+      // Check if recurring item is active for this month
+      if (re.startMonth && budget.month < re.startMonth) return
+      if (re.endMonth && budget.month > re.endMonth) return
+
       const exists = newBudget.expenses.some(e => e.recurringId === re.id)
       if (!exists) {
         newBudget.expenses.push({
@@ -104,8 +132,8 @@ export default function ExpenseTracker() {
       if (instData) setInstallments(instData.map(i => ({ id: i.id, name: i.name, amount: i.amount, startDate: i.start_date, totalInstallments: i.total_installments, dayOfMonth: i.day_of_month, payments: i.payments || [] })))
       if (budgetData) setMonthlyBudgets(budgetData.map(b => ({ id: b.id, month: b.month, incomes: b.incomes || [], expenses: b.expenses || [] })))
       if (recurringData) {
-        const incomes = recurringData.filter(r => r.type === 'income').map(r => ({ id: r.id, description: r.description, amount: r.amount }))
-        const expenses = recurringData.filter(r => r.type === 'expense').map(r => ({ id: r.id, description: r.description, amount: r.amount, category: r.category }))
+        const incomes = recurringData.filter(r => r.type === 'income').map(r => ({ id: r.id, description: r.description, amount: r.amount, startMonth: r.start_month, endMonth: r.end_month }))
+        const expenses = recurringData.filter(r => r.type === 'expense').map(r => ({ id: r.id, description: r.description, amount: r.amount, category: r.category, startMonth: r.start_month, endMonth: r.end_month }))
         setRecurringItems({ incomes, expenses })
       }
 
@@ -137,7 +165,16 @@ export default function ExpenseTracker() {
   const saveRecurringItem = async (item, type) => {
     if (!isSupabaseConfigured) return
     try {
-      await supabase.from('recurring_items').upsert({ id: item.id, type, description: item.description, amount: item.amount, category: item.category || null, updated_at: new Date().toISOString() })
+      await supabase.from('recurring_items').upsert({
+        id: item.id,
+        type,
+        description: item.description,
+        amount: item.amount,
+        category: item.category || null,
+        start_month: item.startMonth || null,
+        end_month: item.endMonth || null,
+        updated_at: new Date().toISOString()
+      })
       setLastSync(new Date()); setIsOnline(true)
     } catch (e) { console.error('Save error:', e); setIsOnline(false) }
   }
@@ -164,6 +201,9 @@ export default function ExpenseTracker() {
 
   useEffect(() => {
     if (!isLoaded) return
+    // Only apply recurring items to current or future months
+    if (!isCurrentOrFutureMonth(selectedMonth)) return
+
     const budget = getCurrentBudget()
     const { budget: newBudget, updated } = applyRecurringItems(budget)
     if (updated) {
@@ -228,7 +268,7 @@ export default function ExpenseTracker() {
     const incomeId = Date.now()
 
     if (newIncome.isRecurring) {
-      const recurringItem = { id: incomeId, description: newIncome.description, amount: parseFloat(newIncome.amount) }
+      const recurringItem = { id: incomeId, description: newIncome.description, amount: parseFloat(newIncome.amount), startMonth: selectedMonth, endMonth: null }
       setRecurringItems(prev => ({ ...prev, incomes: [...prev.incomes, recurringItem] }))
       await saveRecurringItem(recurringItem, 'income')
     }
@@ -251,7 +291,7 @@ export default function ExpenseTracker() {
     const expenseId = Date.now()
 
     if (newExpense.isRecurring) {
-      const recurringItem = { id: expenseId, description: newExpense.description, amount: parseFloat(newExpense.amount), category: newExpense.category }
+      const recurringItem = { id: expenseId, description: newExpense.description, amount: parseFloat(newExpense.amount), category: newExpense.category, startMonth: selectedMonth, endMonth: null }
       setRecurringItems(prev => ({ ...prev, expenses: [...prev.expenses, recurringItem] }))
       await saveRecurringItem(recurringItem, 'expense')
     }
@@ -280,12 +320,34 @@ export default function ExpenseTracker() {
   const removeIncome = async (incomeId) => {
     const budget = getCurrentBudget()
     const income = budget.incomes.find(i => i.id === incomeId)
+
     if (income?.recurringId) {
-      if (confirm('Διαγραφή και από τα επαναλαμβανόμενα;')) {
-        setRecurringItems(prev => ({ ...prev, incomes: prev.incomes.filter(i => i.id !== income.recurringId) }))
-        await deleteRecurringItem(income.recurringId)
+      const choice = confirm('Διαγραφή επαναλαμβανόμενου;\n\nOK = Σταματά από τον επόμενο μήνα (μένει στους παλιούς)\nCancel = Διαγραφή μόνο από αυτόν τον μήνα')
+      if (choice) {
+        // Set end month to current month (will stop appearing from next month)
+        const recurringItem = recurringItems.incomes.find(r => r.id === income.recurringId)
+        if (recurringItem) {
+          const updatedRecurring = { ...recurringItem, endMonth: selectedMonth }
+          setRecurringItems(prev => ({ ...prev, incomes: prev.incomes.map(r => r.id === income.recurringId ? updatedRecurring : r) }))
+          await saveRecurringItem(updatedRecurring, 'income')
+
+          // Remove from future months
+          const updatedBudgets = monthlyBudgets.map(b => {
+            if (b.month > selectedMonth) {
+              return { ...b, incomes: b.incomes.filter(i => i.recurringId !== income.recurringId) }
+            }
+            return b
+          })
+          setMonthlyBudgets(updatedBudgets)
+          for (const b of updatedBudgets.filter(b => b.month > selectedMonth)) {
+            await saveBudget(b)
+          }
+        }
+        return
       }
     }
+
+    // Just remove from this month
     const updatedBudget = { ...budget, incomes: budget.incomes.filter(i => i.id !== incomeId) }
     setMonthlyBudgets(prev => prev.map(b => b.month === selectedMonth ? updatedBudget : b))
     await saveBudget(updatedBudget)
@@ -294,15 +356,97 @@ export default function ExpenseTracker() {
   const removeExpense = async (expenseId) => {
     const budget = getCurrentBudget()
     const expense = budget.expenses.find(e => e.id === expenseId)
+
     if (expense?.recurringId) {
-      if (confirm('Διαγραφή και από τα επαναλαμβανόμενα;')) {
-        setRecurringItems(prev => ({ ...prev, expenses: prev.expenses.filter(e => e.id !== expense.recurringId) }))
-        await deleteRecurringItem(expense.recurringId)
+      const choice = confirm('Διαγραφή επαναλαμβανόμενου;\n\nOK = Σταματά από τον επόμενο μήνα (μένει στους παλιούς)\nCancel = Διαγραφή μόνο από αυτόν τον μήνα')
+      if (choice) {
+        // Set end month to current month (will stop appearing from next month)
+        const recurringItem = recurringItems.expenses.find(r => r.id === expense.recurringId)
+        if (recurringItem) {
+          const updatedRecurring = { ...recurringItem, endMonth: selectedMonth }
+          setRecurringItems(prev => ({ ...prev, expenses: prev.expenses.map(r => r.id === expense.recurringId ? updatedRecurring : r) }))
+          await saveRecurringItem(updatedRecurring, 'expense')
+
+          // Remove from future months
+          const updatedBudgets = monthlyBudgets.map(b => {
+            if (b.month > selectedMonth) {
+              return { ...b, expenses: b.expenses.filter(e => e.recurringId !== expense.recurringId) }
+            }
+            return b
+          })
+          setMonthlyBudgets(updatedBudgets)
+          for (const b of updatedBudgets.filter(b => b.month > selectedMonth)) {
+            await saveBudget(b)
+          }
+        }
+        return
       }
     }
+
+    // Just remove from this month
     const updatedBudget = { ...budget, expenses: budget.expenses.filter(e => e.id !== expenseId) }
     setMonthlyBudgets(prev => prev.map(b => b.month === selectedMonth ? updatedBudget : b))
     await saveBudget(updatedBudget)
+  }
+
+  const startEditIncome = (income) => {
+    setEditingIncome(income.id)
+    setEditForm({ description: income.description, amount: income.amount.toString(), category: '' })
+  }
+
+  const saveEditIncome = async (incomeId) => {
+    const budget = getCurrentBudget()
+    const income = budget.incomes.find(i => i.id === incomeId)
+
+    const updatedBudget = {
+      ...budget,
+      incomes: budget.incomes.map(i => i.id === incomeId ? { ...i, description: editForm.description, amount: parseFloat(editForm.amount) } : i)
+    }
+    setMonthlyBudgets(prev => prev.map(b => b.month === selectedMonth ? updatedBudget : b))
+    await saveBudget(updatedBudget)
+
+    // If recurring, update the recurring item too
+    if (income?.recurringId) {
+      const recurringItem = recurringItems.incomes.find(r => r.id === income.recurringId)
+      if (recurringItem) {
+        const updatedRecurring = { ...recurringItem, description: editForm.description, amount: parseFloat(editForm.amount) }
+        setRecurringItems(prev => ({ ...prev, incomes: prev.incomes.map(r => r.id === income.recurringId ? updatedRecurring : r) }))
+        await saveRecurringItem(updatedRecurring, 'income')
+      }
+    }
+
+    setEditingIncome(null)
+    setEditForm({ description: '', amount: '', category: '' })
+  }
+
+  const startEditExpense = (expense) => {
+    setEditingExpense(expense.id)
+    setEditForm({ description: expense.description, amount: expense.amount.toString(), category: expense.category })
+  }
+
+  const saveEditExpense = async (expenseId) => {
+    const budget = getCurrentBudget()
+    const expense = budget.expenses.find(e => e.id === expenseId)
+
+    const updatedBudget = {
+      ...budget,
+      expenses: budget.expenses.map(e => e.id === expenseId ? { ...e, description: editForm.description, amount: parseFloat(editForm.amount), category: editForm.category } : e)
+    }
+    setMonthlyBudgets(prev => prev.map(b => b.month === selectedMonth ? updatedBudget : b))
+    await saveBudget(updatedBudget)
+
+    // If recurring, update the recurring item too
+    if (expense?.recurringId) {
+      const recurringItem = recurringItems.expenses.find(r => r.id === expense.recurringId)
+      if (recurringItem) {
+        const updatedRecurring = { ...recurringItem, description: editForm.description, amount: parseFloat(editForm.amount), category: editForm.category }
+        setRecurringItems(prev => ({ ...prev, expenses: prev.expenses.map(r => r.id === expense.recurringId ? updatedRecurring : r) }))
+        await saveRecurringItem(updatedRecurring, 'expense')
+      }
+    }
+
+    setEditingExpense(null)
+    setEditForm({ description: '', amount: '', category: '' })
   }
 
   const completeExpense = async (expenseId) => {
@@ -378,8 +522,8 @@ export default function ExpenseTracker() {
     const newBudget = {
       id: existingNext?.id || Date.now(),
       month: nextMonthStr,
-      incomes: [...(existingNext?.incomes || []), ...(currentBudget.incomes || []).map(i => ({ ...i, id: Date.now() + Math.random() }))],
-      expenses: [...(existingNext?.expenses || []), ...(currentBudget.expenses || []).map(e => ({ ...e, id: Date.now() + Math.random(), paidAmount: 0, payments: [], completed: false }))]
+      incomes: [...(existingNext?.incomes || []), ...(currentBudget.incomes || []).filter(i => !i.recurringId).map(i => ({ ...i, id: Date.now() + Math.random() }))],
+      expenses: [...(existingNext?.expenses || []), ...(currentBudget.expenses || []).filter(e => !e.recurringId).map(e => ({ ...e, id: Date.now() + Math.random(), paidAmount: 0, payments: [], completed: false }))]
     }
 
     setMonthlyBudgets(prev => {
@@ -536,7 +680,7 @@ export default function ExpenseTracker() {
                     {newIncome.isRecurring && <Check size={14} className="text-white" />}
                   </div>
                   <input type="checkbox" checked={newIncome.isRecurring} onChange={e => setNewIncome({ ...newIncome, isRecurring: e.target.checked })} className="hidden" />
-                  <span className="text-slate-300 flex items-center gap-2"><Repeat size={16} className="text-emerald-400" />Επαναλαμβανόμενο κάθε μήνα</span>
+                  <span className="text-slate-300 flex items-center gap-2"><Repeat size={16} className="text-emerald-400" />Επαναλαμβανόμενο (από {getMonthNameShort(selectedMonth)} και μετά)</span>
                 </label>
                 <div className="flex gap-2 justify-end">
                   <button onClick={() => setShowAddIncome(false)} className="px-5 py-2.5 bg-slate-700 text-slate-300 rounded-xl hover:bg-slate-600 transition-all">Ακύρωση</button>
@@ -562,7 +706,7 @@ export default function ExpenseTracker() {
                     {newExpense.isRecurring && <Check size={14} className="text-white" />}
                   </div>
                   <input type="checkbox" checked={newExpense.isRecurring} onChange={e => setNewExpense({ ...newExpense, isRecurring: e.target.checked })} className="hidden" />
-                  <span className="text-slate-300 flex items-center gap-2"><Repeat size={16} className="text-rose-400" />Επαναλαμβανόμενο κάθε μήνα</span>
+                  <span className="text-slate-300 flex items-center gap-2"><Repeat size={16} className="text-rose-400" />Επαναλαμβανόμενο (από {getMonthNameShort(selectedMonth)} και μετά)</span>
                 </label>
                 <div className="flex gap-2 justify-end">
                   <button onClick={() => setShowAddExpense(false)} className="px-5 py-2.5 bg-slate-700 text-slate-300 rounded-xl hover:bg-slate-600 transition-all">Ακύρωση</button>
@@ -579,20 +723,32 @@ export default function ExpenseTracker() {
                 </div>
                 <div className="divide-y divide-slate-700/50">
                   {(budget.incomes || []).map(income => (
-                    <div key={income.id} className="flex items-center justify-between p-4 hover:bg-slate-800/30 transition-all">
-                      <div className="flex items-center gap-4">
-                        <div className="w-11 h-11 bg-emerald-500/10 rounded-xl flex items-center justify-center">
-                          {income.recurringId ? <Repeat className="text-emerald-400" size={18} /> : <Euro className="text-emerald-400" size={18} />}
+                    <div key={income.id} className="p-4 hover:bg-slate-800/30 transition-all">
+                      {editingIncome === income.id ? (
+                        <div className="flex items-center gap-3">
+                          <input type="text" value={editForm.description} onChange={e => setEditForm({ ...editForm, description: e.target.value })} className="flex-1 bg-slate-900/50 border border-slate-700 rounded-xl px-3 py-2 text-white text-sm focus:border-emerald-500/50 focus:outline-none" />
+                          <input type="number" step="0.01" value={editForm.amount} onChange={e => setEditForm({ ...editForm, amount: e.target.value })} className="w-28 bg-slate-900/50 border border-slate-700 rounded-xl px-3 py-2 text-white text-sm focus:border-emerald-500/50 focus:outline-none" />
+                          <button onClick={() => saveEditIncome(income.id)} className="p-2 text-emerald-400 hover:bg-emerald-500/20 rounded-lg transition-all"><Save size={16} /></button>
+                          <button onClick={() => { setEditingIncome(null); setEditForm({ description: '', amount: '', category: '' }) }} className="p-2 text-slate-400 hover:bg-slate-700 rounded-lg transition-all"><X size={16} /></button>
                         </div>
-                        <div>
-                          <span className="text-white font-medium">{income.description}</span>
-                          {income.recurringId && <span className="ml-2 text-xs text-emerald-400/60 bg-emerald-500/10 px-2 py-0.5 rounded-full">Μηνιαίο</span>}
+                      ) : (
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-4">
+                            <div className="w-11 h-11 bg-emerald-500/10 rounded-xl flex items-center justify-center">
+                              {income.recurringId ? <Repeat className="text-emerald-400" size={18} /> : <Euro className="text-emerald-400" size={18} />}
+                            </div>
+                            <div>
+                              <span className="text-white font-medium">{income.description}</span>
+                              {income.recurringId && <span className="ml-2 text-xs text-emerald-400/60 bg-emerald-500/10 px-2 py-0.5 rounded-full">Μηνιαίο</span>}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="text-emerald-400 font-semibold text-lg">{formatCurrency(income.amount)}</span>
+                            <button onClick={() => startEditIncome(income)} className="p-2 text-slate-500 hover:text-indigo-400 hover:bg-indigo-500/10 rounded-lg transition-all"><Pencil size={16} /></button>
+                            <button onClick={() => removeIncome(income.id)} className="p-2 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all"><Trash2 size={16} /></button>
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className="text-emerald-400 font-semibold text-lg">{formatCurrency(income.amount)}</span>
-                        <button onClick={() => removeIncome(income.id)} className="p-2 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all"><Trash2 size={16} /></button>
-                      </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -616,82 +772,99 @@ export default function ExpenseTracker() {
                     return (
                       <div key={expense.id} className={`transition-all ${isCompleted ? 'bg-emerald-500/5' : ''}`}>
                         <div className="p-4">
-                          <div className="flex items-center justify-between mb-3">
-                            <div className="flex items-center gap-4">
-                              <button
-                                onClick={() => !isCompleted && completeExpense(expense.id)}
-                                disabled={isCompleted}
-                                className={`w-11 h-11 rounded-xl flex items-center justify-center transition-all ${isCompleted ? 'bg-emerald-500 text-white' : 'bg-slate-700/50 text-slate-400 hover:bg-indigo-500/20 hover:text-indigo-400'}`}
-                              >
-                                {isCompleted ? <Check size={18} /> : <Euro size={18} />}
-                              </button>
-                              <div>
+                          {editingExpense === expense.id ? (
+                            <div className="space-y-3">
+                              <div className="flex items-center gap-3">
+                                <input type="text" value={editForm.description} onChange={e => setEditForm({ ...editForm, description: e.target.value })} className="flex-1 bg-slate-900/50 border border-slate-700 rounded-xl px-3 py-2 text-white text-sm focus:border-rose-500/50 focus:outline-none" />
+                                <input type="number" step="0.01" value={editForm.amount} onChange={e => setEditForm({ ...editForm, amount: e.target.value })} className="w-28 bg-slate-900/50 border border-slate-700 rounded-xl px-3 py-2 text-white text-sm focus:border-rose-500/50 focus:outline-none" />
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <select value={editForm.category} onChange={e => setEditForm({ ...editForm, category: e.target.value })} className="flex-1 bg-slate-900/50 border border-slate-700 rounded-xl px-3 py-2 text-white text-sm focus:border-rose-500/50 focus:outline-none">{categories.map(c => <option key={c} value={c}>{c}</option>)}</select>
+                                <button onClick={() => saveEditExpense(expense.id)} className="p-2 text-emerald-400 hover:bg-emerald-500/20 rounded-lg transition-all"><Save size={16} /></button>
+                                <button onClick={() => { setEditingExpense(null); setEditForm({ description: '', amount: '', category: '' }) }} className="p-2 text-slate-400 hover:bg-slate-700 rounded-lg transition-all"><X size={16} /></button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-4">
+                                  <button
+                                    onClick={() => !isCompleted && completeExpense(expense.id)}
+                                    disabled={isCompleted}
+                                    className={`w-11 h-11 rounded-xl flex items-center justify-center transition-all ${isCompleted ? 'bg-emerald-500 text-white' : 'bg-slate-700/50 text-slate-400 hover:bg-indigo-500/20 hover:text-indigo-400'}`}
+                                  >
+                                    {isCompleted ? <Check size={18} /> : <Euro size={18} />}
+                                  </button>
+                                  <div>
+                                    <div className="flex items-center gap-2">
+                                      <span className={`font-medium ${isCompleted ? 'text-emerald-400 line-through' : 'text-white'}`}>{expense.description}</span>
+                                      {expense.recurringId && <span className="text-xs text-rose-400/60 bg-rose-500/10 px-2 py-0.5 rounded-full">Μηνιαίο</span>}
+                                    </div>
+                                    <div className="flex items-center gap-2 mt-1">
+                                      <span className="text-xs text-slate-500 px-2 py-0.5 bg-slate-700/50 rounded-lg">{expense.category}</span>
+                                      {!isCompleted && remainingAmount > 0 && (
+                                        <span className="text-xs text-amber-400">Υπόλοιπο: {formatCurrency(remainingAmount)}</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
                                 <div className="flex items-center gap-2">
-                                  <span className={`font-medium ${isCompleted ? 'text-emerald-400 line-through' : 'text-white'}`}>{expense.description}</span>
-                                  {expense.recurringId && <span className="text-xs text-rose-400/60 bg-rose-500/10 px-2 py-0.5 rounded-full">Μηνιαίο</span>}
-                                </div>
-                                <div className="flex items-center gap-2 mt-1">
-                                  <span className="text-xs text-slate-500 px-2 py-0.5 bg-slate-700/50 rounded-lg">{expense.category}</span>
-                                  {!isCompleted && remainingAmount > 0 && (
-                                    <span className="text-xs text-amber-400">Υπόλοιπο: {formatCurrency(remainingAmount)}</span>
+                                  <div className="text-right mr-2">
+                                    <div className={`font-semibold text-lg ${isCompleted ? 'text-emerald-400' : 'text-white'}`}>{formatCurrency(expense.amount)}</div>
+                                    {paidAmount > 0 && !isCompleted && (
+                                      <div className="text-xs text-emerald-400">Πληρώθηκαν: {formatCurrency(paidAmount)}</div>
+                                    )}
+                                  </div>
+                                  {!isCompleted && (
+                                    <button
+                                      onClick={() => setPayingExpense(payingExpense === expense.id ? null : expense.id)}
+                                      className="p-2.5 text-indigo-400 hover:text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 rounded-xl transition-all"
+                                      title="Προσθήκη πληρωμής"
+                                    >
+                                      <CircleDollarSign size={18} />
+                                    </button>
                                   )}
+                                  {(expense.payments || []).length > 0 && (
+                                    <button
+                                      onClick={() => setExpandedExpense(isExpanded ? null : expense.id)}
+                                      className="p-2.5 text-slate-400 hover:text-white bg-slate-700/50 hover:bg-slate-700 rounded-xl transition-all"
+                                      title="Ιστορικό πληρωμών"
+                                    >
+                                      <History size={18} />
+                                    </button>
+                                  )}
+                                  <button onClick={() => startEditExpense(expense)} className="p-2.5 text-slate-500 hover:text-indigo-400 hover:bg-indigo-500/10 rounded-xl transition-all"><Pencil size={16} /></button>
+                                  <button onClick={() => removeExpense(expense.id)} className="p-2.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition-all"><Trash2 size={16} /></button>
                                 </div>
                               </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div className="text-right mr-2">
-                                <div className={`font-semibold text-lg ${isCompleted ? 'text-emerald-400' : 'text-white'}`}>{formatCurrency(expense.amount)}</div>
-                                {paidAmount > 0 && !isCompleted && (
-                                  <div className="text-xs text-emerald-400">Πληρώθηκαν: {formatCurrency(paidAmount)}</div>
-                                )}
-                              </div>
-                              {!isCompleted && (
-                                <button
-                                  onClick={() => setPayingExpense(payingExpense === expense.id ? null : expense.id)}
-                                  className="p-2.5 text-indigo-400 hover:text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 rounded-xl transition-all"
-                                  title="Προσθήκη πληρωμής"
-                                >
-                                  <CircleDollarSign size={18} />
-                                </button>
-                              )}
-                              {(expense.payments || []).length > 0 && (
-                                <button
-                                  onClick={() => setExpandedExpense(isExpanded ? null : expense.id)}
-                                  className="p-2.5 text-slate-400 hover:text-white bg-slate-700/50 hover:bg-slate-700 rounded-xl transition-all"
-                                  title="Ιστορικό πληρωμών"
-                                >
-                                  <History size={18} />
-                                </button>
-                              )}
-                              <button onClick={() => removeExpense(expense.id)} className="p-2.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition-all"><Trash2 size={16} /></button>
-                            </div>
-                          </div>
 
-                          {/* Progress Bar */}
-                          {!isCompleted && expense.amount > 0 && (
-                            <div className="h-2 bg-slate-700/50 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-500"
-                                style={{ width: `${progress}%` }}
-                              />
-                            </div>
-                          )}
+                              {/* Progress Bar */}
+                              {!isCompleted && expense.amount > 0 && (
+                                <div className="h-2 bg-slate-700/50 rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-500"
+                                    style={{ width: `${progress}%` }}
+                                  />
+                                </div>
+                              )}
 
-                          {/* Payment Input */}
-                          {payingExpense === expense.id && (
-                            <div className="mt-4 flex gap-2">
-                              <input
-                                type="number"
-                                step="0.01"
-                                placeholder="Ποσό πληρωμής..."
-                                value={paymentAmount}
-                                onChange={e => setPaymentAmount(e.target.value)}
-                                className="flex-1 bg-slate-900/50 border border-slate-700 rounded-xl px-4 py-2.5 text-white text-sm placeholder-slate-500 focus:border-indigo-500/50 focus:outline-none"
-                                autoFocus
-                              />
-                              <button onClick={() => addPartialPayment(expense.id)} className="px-4 py-2.5 bg-gradient-to-r from-indigo-500 to-purple-500 text-white rounded-xl text-sm font-medium hover:shadow-lg hover:shadow-indigo-500/25 transition-all">Καταχώρηση</button>
-                              <button onClick={() => { setPayingExpense(null); setPaymentAmount('') }} className="px-3 py-2.5 bg-slate-700 text-slate-300 rounded-xl hover:bg-slate-600 transition-all"><X size={16} /></button>
-                            </div>
+                              {/* Payment Input */}
+                              {payingExpense === expense.id && (
+                                <div className="mt-4 flex gap-2">
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    placeholder="Ποσό πληρωμής..."
+                                    value={paymentAmount}
+                                    onChange={e => setPaymentAmount(e.target.value)}
+                                    className="flex-1 bg-slate-900/50 border border-slate-700 rounded-xl px-4 py-2.5 text-white text-sm placeholder-slate-500 focus:border-indigo-500/50 focus:outline-none"
+                                    autoFocus
+                                  />
+                                  <button onClick={() => addPartialPayment(expense.id)} className="px-4 py-2.5 bg-gradient-to-r from-indigo-500 to-purple-500 text-white rounded-xl text-sm font-medium hover:shadow-lg hover:shadow-indigo-500/25 transition-all">Καταχώρηση</button>
+                                  <button onClick={() => { setPayingExpense(null); setPaymentAmount('') }} className="px-3 py-2.5 bg-slate-700 text-slate-300 rounded-xl hover:bg-slate-600 transition-all"><X size={16} /></button>
+                                </div>
+                              )}
+                            </>
                           )}
                         </div>
 
@@ -750,7 +923,7 @@ export default function ExpenseTracker() {
               <div className="bg-slate-800/30 backdrop-blur border border-slate-700/50 rounded-2xl p-4">
                 <div className="flex items-center gap-2 text-slate-400 text-sm">
                   <Repeat size={16} />
-                  <span>{recurringItems.incomes.length + recurringItems.expenses.length} επαναλαμβανόμενα στοιχεία ενεργά</span>
+                  <span>{recurringItems.incomes.filter(r => !r.endMonth).length + recurringItems.expenses.filter(r => !r.endMonth).length} ενεργά επαναλαμβανόμενα</span>
                 </div>
               </div>
             )}

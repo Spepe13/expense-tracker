@@ -1,3 +1,6 @@
 'use client'
-import ExpenseTracker from '../components/ExpenseTracker'
-export default function Home() { return <ExpenseTracker /> }
+import AuthGate from '../components/AuthGate'
+
+export default function Home() {
+  return <AuthGate />
+}

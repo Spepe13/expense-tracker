@@ -1,4 +1,36 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-html, body { min-height: 100vh; }
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  background: #0b0e15;
+  background-image: radial-gradient(1200px 600px at 50% -200px, rgba(99, 102, 241, 0.09), transparent 70%);
+  background-attachment: fixed;
+  color: #e2e8f0;
+  font-family: 'Commissioner', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: rgba(129, 140, 248, 0.35);
+}
+
+/* Λεπτά scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+}

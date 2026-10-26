@@ -42,6 +42,15 @@ Next.js 14 + Supabase (Auth + Postgres + RLS + Realtime). Κάθε χρήστη�
   - τα ποσά δέχονται πλέον και κόμμα (12,50)
 - Next.js 14.0.4 → 14.2.35 (security patch).
 
+## Καινούργια εγκατάσταση (από το μηδέν)
+
+1. Νέο project στο [supabase.com](https://supabase.com).
+2. Τρέξε το `supabase/migrations/20261026000000_init.sql` (SQL Editor → Run, ή `npx supabase db push`).
+3. Deploy στο Vercel με `NEXT_PUBLIC_SUPABASE_URL` και `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+4. Supabase → Authentication → URL Configuration: Site URL = η διεύθυνση του Vercel.
+
+> Το `migration_v7_multiuser.sql` είναι **μόνο** για αναβάθμιση υπάρχουσας βάσης v6.
+
 ## Local dev
 
 ```bash

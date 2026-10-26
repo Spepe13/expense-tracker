@@ -1,25 +1,23 @@
 'use client'
 
-import { AlertTriangle, TrendingUp, ListChecks, CreditCard } from 'lucide-react'
+import { AlertTriangle, TrendingUp, ListChecks } from 'lucide-react'
 import { categoryColor, currentMonth, fmt, monthAcc, monthOnly } from '../../lib/utils'
 
 /**
  * Ειδοποίηση ταμπλό για την ισορροπία εσόδων / εξόδων του μήνα.
  *
+ * Τα `expenses` περιλαμβάνουν ήδη τις δόσεις του μήνα.
+ *
  * Επίπεδα:
- *  - danger : τα έξοδα του μήνα ξεπερνούν τα έσοδα
- *  - warning: τα έξοδα + οι δόσεις του μήνα ξεπερνούν τα έσοδα
+ *  - danger : τα έξοδα του μήνα (μαζί με τις δόσεις) ξεπερνούν τα έσοδα
  *  - notice : έχουν δεσμευτεί ≥ 90% των εσόδων
  */
-export function getBudgetAlert({ month, income, expenses, installmentsDue }) {
-  if (expenses <= 0 && installmentsDue <= 0) return null
+export function getBudgetAlert({ month, income, expenses }) {
+  if (expenses <= 0) return null
   const isPast = month < currentMonth()
 
   if (expenses > income) {
     return { level: 'danger', gap: expenses - income, isPast }
-  }
-  if (installmentsDue > 0 && expenses + installmentsDue > income) {
-    return { level: 'warning', gap: expenses + installmentsDue - income, isPast }
   }
   if (income > 0 && expenses / income >= 0.9) {
     return { level: 'notice', ratio: expenses / income, left: income - expenses, isPast }
@@ -27,7 +25,7 @@ export function getBudgetAlert({ month, income, expenses, installmentsDue }) {
   return null
 }
 
-export default function BudgetAlert({ alert, month, income, expenses, installmentsDue, topCategories, onAddIncome, onReviewExpenses, onOpenInstallments }) {
+export default function BudgetAlert({ alert, month, income, expenses, installmentsDue, topCategories, onAddIncome, onReviewExpenses }) {
   if (!alert) return null
   const m = monthAcc(month)
 
@@ -48,7 +46,7 @@ export default function BudgetAlert({ alert, month, income, expenses, installmen
                 <>Δεν έχεις καταχωρήσει έσοδα για τον {m}, ενώ τα έξοδα είναι <b className="text-white">{fmt(expenses)}</b>.</>
               ) : (
                 <>
-                  Τον {m} τα έξοδα ({fmt(expenses)}) είναι περισσότερα από τα έσοδα ({fmt(income)}) κατά{' '}
+                  Τον {m} τα έξοδα ({fmt(expenses)}{installmentsDue > 0 ? `, μαζί με ${fmt(installmentsDue)} δόσεις` : ''}) είναι περισσότερα από τα έσοδα ({fmt(income)}) κατά{' '}
                   <b className="whitespace-nowrap text-white">{fmt(alert.gap)}</b>.
                 </>
               )}
@@ -80,26 +78,6 @@ export default function BudgetAlert({ alert, month, income, expenses, installmen
               </div>
             )}
           </div>
-        </div>
-      </section>
-    )
-  }
-
-  if (alert.level === 'warning') {
-    return (
-      <section role="status" className="flex gap-4 rounded-3xl border border-amber-500/25 bg-amber-500/[0.08] p-5">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-500/15">
-          <CreditCard className="text-amber-300" size={20} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h3 className="font-bold text-amber-100">Με τις δόσεις δεν βγαίνεις</h3>
-          <p className="mt-1 text-sm leading-relaxed text-amber-100/75">
-            Τα έξοδα ({fmt(expenses)}) μαζί με τις δόσεις του μήνα ({fmt(installmentsDue)}) ξεπερνούν τα έσοδα κατά{' '}
-            <b className="whitespace-nowrap text-white">{fmt(alert.gap)}</b>.
-          </p>
-          <button onClick={onOpenInstallments} className="mt-3 text-sm font-semibold text-amber-300 hover:text-amber-200">
-            Δες τις δόσεις →
-          </button>
         </div>
       </section>
     )

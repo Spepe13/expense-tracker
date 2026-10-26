@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState } from 'react'
 import { Check, ChevronLeft, ChevronRight, Copy, CreditCard, Plus, Repeat, TrendingDown, TrendingUp, Wallet } from 'lucide-react'
-import { categoryColor, currentMonth, daysLeftInMonth, fmt, monthGen, monthName, monthNameShort, same, shiftMonth, sum } from '../../lib/utils'
+import { categoryColor, currentMonth, daysLeftInMonth, fmt, fmtDateShort, monthGen, monthName, monthNameShort, same, shiftMonth, sum } from '../../lib/utils'
 import { cardCls, useConfirm, useToast } from '../ui'
 import BudgetAlert, { getBudgetAlert } from './BudgetAlert'
 import { AddEntrySheet, ExpenseSheet, IncomeSheet, RecurringSheet } from './EntrySheets'
@@ -36,7 +36,7 @@ function MonthSwitcher({ month, setMonth, onCopy }) {
 }
 
 // ---------------------------------------------------------------------------
-function BalanceHero({ month, income, expenses, paid }) {
+function BalanceHero({ month, income, expenses, paid, installments }) {
   const balance = income - expenses
   const pending = expenses - paid
   const negative = balance < 0
@@ -67,6 +67,7 @@ function BalanceHero({ month, income, expenses, paid }) {
               <TrendingDown size={13} /> Έξοδα
             </div>
             <div className="mt-0.5 font-bold tabular-nums text-rose-200">{fmt(expenses)}</div>
+            {installments > 0 && <div className="text-[11px] text-rose-200/50">με δόσεις {fmt(installments)}</div>}
           </div>
         </div>
 
@@ -160,7 +161,7 @@ function PayCircle({ pct, done, onClick }) {
   )
 }
 
-function ExpenseRow({ e, onOpen, onPay }) {
+function ExpenseRow({ e, onOpen, onPay, onUnpay, maybeDuplicate }) {
   const paid = e.paidAmount || 0
   const done = e.completed || paid >= e.amount
   const pct = e.amount > 0 ? Math.min(100, (paid / e.amount) * 100) : 0
@@ -171,17 +172,31 @@ function ExpenseRow({ e, onOpen, onPay }) {
         done={done}
         onClick={(ev) => {
           ev.stopPropagation()
-          if (done) onOpen()
+          if (done) (e.isInstallment ? onUnpay() : onOpen())
           else onPay()
         }}
       />
       <div className="min-w-0 flex-1">
         <div className={`truncate font-medium ${done ? 'text-slate-500 line-through decoration-slate-600' : 'text-slate-100'}`}>{e.description}</div>
         <div className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500">
-          <span className="h-1.5 w-1.5 rounded-full" style={{ background: categoryColor(e.category) }} />
-          <span className="truncate">{e.category}</span>
-          {e.recurringId && <Repeat size={11} className="shrink-0" />}
+          {e.isInstallment ? (
+            <>
+              <CreditCard size={11} className="shrink-0 text-indigo-300/80" />
+              <span className="truncate">
+                Δόση {e.number}/{e.total} · {fmtDateShort(e.dueDate)}
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: categoryColor(e.category) }} />
+              <span className="truncate">{e.category}</span>
+              {e.recurringId && <Repeat size={11} className="shrink-0" />}
+            </>
+          )}
         </div>
+        {maybeDuplicate && !done && (
+          <div className="mt-1 inline-flex rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-300">Μοιάζει διπλό με δόση — οι δόσεις μετράνε πλέον αυτόματα</div>
+        )}
       </div>
       <div className="shrink-0 text-right">
         <div className={`font-semibold tabular-nums ${done ? 'text-slate-500' : 'text-slate-100'}`}>{fmt(e.amount)}</div>
@@ -221,17 +236,46 @@ export default function BudgetView({ fin, month, setMonth, goToInstallments }) {
   const incomes = budget.incomes || []
   const expenses = budget.expenses || []
 
-  const totalIncome = sum(incomes, (i) => i.amount)
-  const totalExpenses = sum(expenses, (e) => e.amount)
-  const totalPaid = sum(expenses, (e) => Math.min(e.paidAmount || 0, e.amount))
+  // Οι δόσεις του μήνα μετράνε αυτόματα ως έξοδα (πηγή: προγράμματα δόσεων)
+  const instRows = fin.installments.flatMap((p) =>
+    p.payments
+      .filter((x) => x.dueDate?.startsWith(month))
+      .map((x) => ({
+        id: `inst-${p.id}-${x.number}`,
+        isInstallment: true,
+        planId: p.id,
+        number: x.number,
+        total: p.totalInstallments,
+        dueDate: x.dueDate,
+        description: p.name,
+        amount: x.amount,
+        category: 'Δόσεις',
+        paidAmount: x.paid ? x.amount : 0,
+        completed: !!x.paid,
+      }))
+  )
+  const allExpenses = [...expenses, ...instRows]
 
-  const instThisMonth = fin.installments.flatMap((p) => p.payments.filter((x) => x.dueDate?.startsWith(month)).map((x) => ({ ...x, plan: p.name })))
-  const instDue = sum(instThisMonth, (x) => x.amount)
-  const instUnpaid = instThisMonth.filter((x) => !x.paid)
+  const totalIncome = sum(incomes, (i) => i.amount)
+  const totalExpenses = sum(allExpenses, (e) => e.amount)
+  const totalPaid = sum(allExpenses, (e) => Math.min(e.paidAmount || 0, e.amount))
+
+  const instDue = sum(instRows, (x) => x.amount)
+  const instUnpaid = instRows.filter((x) => !x.completed)
+  const instThisMonth = instRows
+
+  // Χειροκίνητα έξοδα που μάλλον είναι η ίδια δόση (για τη μετάβαση από τη χειροκίνητη καταχώρηση)
+  const norm = (t) => (t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim()
+  const planNames = instRows.map((r) => norm(r.description)).filter((n) => n.length >= 3)
+  const isMaybeDuplicate = (e) => {
+    if (e.isInstallment) return false
+    const d = norm(e.description)
+    return d.length >= 3 && planNames.some((n) => d.includes(n) || n.includes(d))
+  }
 
   const pendingByCategory = useMemo(() => {
     const map = {}
-    for (const e of expenses) {
+    for (const e of allExpenses) {
       const left = e.amount - (e.paidAmount || 0)
       if (left > 0) map[e.category || 'Γενικά'] = (map[e.category || 'Γενικά'] || 0) + left
     }
@@ -239,12 +283,13 @@ export default function BudgetView({ fin, month, setMonth, goToInstallments }) {
       .map(([name, amount]) => ({ name, amount }))
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 3)
-  }, [expenses])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expenses, fin.installments, month])
 
-  const alert = getBudgetAlert({ month, income: totalIncome, expenses: totalExpenses, installmentsDue: instDue })
+  const alert = getBudgetAlert({ month, income: totalIncome, expenses: totalExpenses })
 
-  const pendingCount = expenses.filter((e) => !(e.completed || (e.paidAmount || 0) >= e.amount)).length
-  const shownExpenses = expenses
+  const pendingCount = allExpenses.filter((e) => !(e.completed || (e.paidAmount || 0) >= e.amount)).length
+  const shownExpenses = allExpenses
     .filter((e) => {
       const done = e.completed || (e.paidAmount || 0) >= e.amount
       return filter === 'all' || (filter === 'pending' ? !done : done)
@@ -288,7 +333,7 @@ export default function BudgetView({ fin, month, setMonth, goToInstallments }) {
     setTimeout(() => listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
   }
 
-  const isEmpty = !incomes.length && !expenses.length
+  const isEmpty = !incomes.length && !allExpenses.length
 
   return (
     <div className="space-y-4 md:space-y-5">
@@ -303,12 +348,11 @@ export default function BudgetView({ fin, month, setMonth, goToInstallments }) {
         topCategories={pendingByCategory}
         onAddIncome={() => setAddKind('income')}
         onReviewExpenses={reviewExpenses}
-        onOpenInstallments={goToInstallments}
       />
 
       <div className="grid gap-4 md:grid-cols-5 md:gap-5">
         <div className="space-y-4 md:col-span-3 md:space-y-5">
-          <BalanceHero month={month} income={totalIncome} expenses={totalExpenses} paid={totalPaid} />
+          <BalanceHero month={month} income={totalIncome} expenses={totalExpenses} paid={totalPaid} installments={instDue} />
 
           <div className="grid grid-cols-2 gap-3">
             <div className={`${cardCls} p-4`}>
@@ -331,7 +375,7 @@ export default function BudgetView({ fin, month, setMonth, goToInstallments }) {
           <section ref={listRef} className={`${cardCls} scroll-mt-24 overflow-hidden`}>
             <div className="flex items-center gap-1 border-b border-white/[0.06] p-2">
               {[
-                ['expenses', `Έξοδα`, expenses.length],
+                ['expenses', `Έξοδα`, allExpenses.length],
                 ['incomes', `Έσοδα`, incomes.length],
               ].map(([k, l, n]) => (
                 <button
@@ -344,7 +388,7 @@ export default function BudgetView({ fin, month, setMonth, goToInstallments }) {
               ))}
             </div>
 
-            {listTab === 'expenses' && expenses.length > 0 && (
+            {listTab === 'expenses' && allExpenses.length > 0 && (
               <div className="flex gap-1.5 px-4 pt-3">
                 {[
                   ['all', 'Όλα'],
@@ -369,8 +413,15 @@ export default function BudgetView({ fin, month, setMonth, goToInstallments }) {
                     <ExpenseRow
                       key={e.id}
                       e={e}
-                      onOpen={() => setSelected({ kind: 'expense', id: e.id })}
+                      maybeDuplicate={isMaybeDuplicate(e)}
+                      onOpen={() => (e.isInstallment ? goToInstallments() : setSelected({ kind: 'expense', id: e.id }))}
+                      onUnpay={() => fin.togglePlanPayment(e.planId, e.number)}
                       onPay={async () => {
+                        if (e.isInstallment) {
+                          await fin.togglePlanPayment(e.planId, e.number)
+                          toast.success(`Δόση ${e.number} · ${e.description}`, { action: { label: 'Αναίρεση', onClick: () => fin.togglePlanPayment(e.planId, e.number) } })
+                          return
+                        }
                         await fin.payFull(month, e.id)
                         toast.success(`«${e.description}» εξοφλήθηκε`, { action: { label: 'Αναίρεση', onClick: () => fin.undoLastPayment(month, e.id) } })
                       }}
@@ -379,8 +430,8 @@ export default function BudgetView({ fin, month, setMonth, goToInstallments }) {
                 </ul>
               ) : (
                 <EmptyList
-                  text={expenses.length ? 'Τίποτα σε αυτό το φίλτρο' : 'Δεν υπάρχουν έξοδα αυτόν τον μήνα'}
-                  action={!expenses.length && { label: 'Νέο έξοδο', onClick: () => setAddKind('expense') }}
+                  text={allExpenses.length ? 'Τίποτα σε αυτό το φίλτρο' : 'Δεν υπάρχουν έξοδα αυτόν τον μήνα'}
+                  action={!allExpenses.length && { label: 'Νέο έξοδο', onClick: () => setAddKind('expense') }}
                 />
               )
             ) : incomes.length ? (
@@ -413,7 +464,7 @@ export default function BudgetView({ fin, month, setMonth, goToInstallments }) {
               </div>
             </section>
           ) : (
-            <CategoryBreakdown expenses={expenses} />
+            <CategoryBreakdown expenses={allExpenses} />
           )}
 
           {activeRecurringCount > 0 && (
